@@ -29,6 +29,16 @@ test('customReplacements as Map', t => {
 	t.is(transliterate('foo@bar', {customReplacements}), 'foo at bar');
 });
 
+test('customReplacements that produce non-ASCII are transliterated', t => {
+	// `customReplacements` output should be fully transliterated
+	t.is(transliterate('foo', {customReplacements: [['foo', 'öäü']]}), 'oeaeue');
+	t.is(transliterate('test', {customReplacements: [['test', 'Ö']]}), 'Oe');
+	t.is(transliterate('x', {customReplacements: [['x', 'Москва']]}), 'Moskva');
+
+	// Non-transliterable characters pass through (e.g., emoji)
+	t.is(transliterate('unicorn', {customReplacements: [['unicorn', '🦄']]}), '🦄');
+});
+
 test('all replacements are ASCII', t => {
 	const MAX_ASCII_CHARACTER_CODE = 127;
 
@@ -307,4 +317,34 @@ test('handles large input efficiently', t => {
 
 	t.is(result, longString); // ASCII passthrough
 	t.true(elapsed < 100, `Expected < 100ms but took ${elapsed.toFixed(1)}ms`);
+});
+
+test('options do not cause performance regression', t => {
+	// Regression test for issue #41 - locale and customReplacements should not be significantly slower
+	const iterations = 1000;
+	const testString = 'Ünïcödé strïng wïth lötś öf chäräctérs';
+
+	const measure = fn => {
+		// Warmup
+		for (let index = 0; index < 100; index++) {
+			fn();
+		}
+
+		const start = performance.now();
+		for (let index = 0; index < iterations; index++) {
+			fn();
+		}
+
+		return performance.now() - start;
+	};
+
+	const baseTime = measure(() => transliterate(testString));
+	const localeTime = measure(() => transliterate(testString, {locale: 'de'}));
+	const customTime = measure(() => transliterate(testString, {customReplacements: [['ö', 'oe']]}));
+	const combinedTime = measure(() => transliterate(testString, {locale: 'de', customReplacements: [['ö', 'oe']]}));
+
+	// Options should not be more than 5x slower than base case
+	t.true(localeTime / baseTime < 5, `locale option is ${(localeTime / baseTime).toFixed(1)}x slower than default`);
+	t.true(customTime / baseTime < 5, `customReplacements option is ${(customTime / baseTime).toFixed(1)}x slower than default`);
+	t.true(combinedTime / baseTime < 5, `locale + customReplacements is ${(combinedTime / baseTime).toFixed(1)}x slower than default`);
 });

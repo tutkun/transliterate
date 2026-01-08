@@ -13,18 +13,38 @@ const buildReplacementPattern = replacements => {
 // Pre-compile the default pattern for performance
 const defaultPattern = buildReplacementPattern(builtinReplacements);
 
-const getLocaleReplacements = locale => {
+// Pre-compile locale patterns
+const localeCache = new Map();
+
+for (const [locale, localeMap] of Object.entries(localeReplacements)) {
+	const replacements = new Map(builtinReplacements);
+	for (const [key, value] of localeMap) {
+		replacements.set(key, value);
+	}
+
+	localeCache.set(locale, {
+		replacements,
+		pattern: buildReplacementPattern(replacements),
+	});
+}
+
+const normalizeLocale = locale => {
 	if (!locale) {
-		return undefined;
+		return;
 	}
 
 	const normalizedLocale = locale.toLowerCase()
 		// Norwegian (no) is an alias for Norwegian Bokmål (nb)
 		.replace(/^no(-|$)/, 'nb$1');
 
-	return localeReplacements[normalizedLocale]
-		|| localeReplacements[normalizedLocale.split('-')[0]]
-		|| undefined;
+	if (Object.hasOwn(localeReplacements, normalizedLocale)) {
+		return normalizedLocale;
+	}
+
+	const prefix = normalizedLocale.split('-')[0];
+	if (Object.hasOwn(localeReplacements, prefix)) {
+		return prefix;
+	}
 };
 
 export default function transliterate(string, options) {
@@ -37,30 +57,27 @@ export default function transliterate(string, options) {
 		...options,
 	};
 
-	const localeMap = getLocaleReplacements(options.locale);
-
-	const hasCustomReplacements = options.customReplacements.length > 0 || options.customReplacements.size > 0;
+	const normalizedLocale = normalizeLocale(options.locale);
+	const customReplacements = [...options.customReplacements];
 
 	let replacements = builtinReplacements;
 	let pattern = defaultPattern;
 
-	if (localeMap || hasCustomReplacements) {
-		replacements = new Map(builtinReplacements);
-
-		if (localeMap) {
-			for (const [key, value] of localeMap) {
-				replacements.set(key, value);
-			}
-		}
-
-		for (const [key, value] of options.customReplacements) {
-			replacements.set(key, value);
-		}
-
-		pattern = buildReplacementPattern(replacements);
+	if (normalizedLocale) {
+		({replacements, pattern} = localeCache.get(normalizedLocale));
 	}
 
 	string = string.normalize();
+
+	// Apply customReplacements separately (avoids expensive regex compilation)
+	if (customReplacements.length > 0) {
+		// Sort by key length descending so longer patterns match first
+		customReplacements.sort((a, b) => b[0].length - a[0].length);
+		for (const [key, value] of customReplacements) {
+			string = string.replaceAll(key, value);
+		}
+	}
+
 	string = string.replace(pattern, match => replacements.get(match) ?? match);
 	string = string.normalize('NFD').replaceAll(/\p{Diacritic}/gu, '').normalize();
 
